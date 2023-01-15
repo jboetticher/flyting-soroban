@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contractimpl, contracttype, contracterror, symbol, 
-    Env, Symbol, Bytes, bytes, Address, AccountId
+    Env, Symbol, Bytes, bytes, Address, AccountId, Map
 };
 
 /* 
@@ -19,8 +19,9 @@ Plan for Flyter:
 - Send a flyt with an optional nickname
 */
 
-const INSULT: Symbol = symbol!("INSULT");
+const INITIALIZED: Symbol = symbol!("READY");
 const FLYT_ID: Symbol = symbol!("FLYT_ID");
+const LIKES: Symbol = symbol!("LIKES_MAP");
 
 #[contracttype]
 #[derive(Debug, Eq, PartialEq)]
@@ -43,7 +44,9 @@ pub struct FlytStats {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    SameUser = 1,
+    NotInitialized = 1,
+    AlreadyInitialized = 2,
+    CannotRespondIfNotDirectedTo = 3,
 }
 
 impl Flyt {
@@ -60,12 +63,20 @@ pub struct Contract;
 
 #[contractimpl]
 impl Contract {
+    /// Used to initialize the smart contract
+    pub fn initialize(env: Env) -> Result<(), Error> {
+        if env.storage().get(INITIALIZED).unwrap_or(Ok(false)).unwrap() {
+            return Err(Error::AlreadyInitialized);
+        }
 
+        // Creates a new map for likes
+
+        Ok(())
+    }
+
+    /// Registers a new flyt
     pub fn send_flyt(env: Env, recipient: AccountId, content: Bytes, nickname: Option<Symbol>) -> i128 {
-        let id: i128 = env.storage()
-            .get(FLYT_ID)
-            .unwrap_or(Ok(0))
-            .unwrap() + 1;
+        let id: i128 = Self::get_count(env.clone()) + 1;
         let nick = match nickname {
             None => symbol!(""),
             Some(i) => i
@@ -80,19 +91,17 @@ impl Contract {
         id
     } 
 
+    // Registers a new flyt in response to a previous flyt
     pub fn res_flyt(env: Env, respond_to: i128, content: Bytes, nickname: Option<Symbol>) -> Result<i128, Error> {
         // Get previous flyt
         let prev: Flyt = Self::get_flyt(env.clone(), respond_to);
 
         // The account can only respond if it was sent to them
         if prev.to != env.source_account() {
-            
+            return Err(Error::CannotRespondIfNotDirectedTo);
         }
 
-        let id: i128 = env.storage()
-            .get(FLYT_ID)
-            .unwrap_or(Ok(0))
-            .unwrap() + 1;
+        let id: i128 = Self::get_count(env.clone()) + 1;
         let nick = match nickname {
             None => symbol!(""),
             Some(i) => i
@@ -104,9 +113,10 @@ impl Contract {
         // Store Flyt
         Self::store_new_flyt(env, id, flyt, stats);
 
-        id
+        Ok(id)
     }
 
+    // Stores a flyt in its natural habitat
     fn store_new_flyt(env: Env, id: i128, flyt: Flyt, stats: FlytStats) {
         // Store flyt at id
         env.storage().set(id, flyt);
@@ -116,6 +126,7 @@ impl Contract {
         env.storage().set(data_id, stats);
     }
 
+    /// Returns a flyt by its id, if it exists
     pub fn get_flyt(env: Env, id: i128) -> Flyt {
         env.storage()
             .get(id)
@@ -123,16 +134,18 @@ impl Contract {
             .unwrap()
     }
 
-    pub fn insult(env: Env, insult: Bytes) {
-        env.storage().set(INSULT, insult);
-    }
-
-    pub fn get_insult(env: Env) -> Bytes {
+    /// Returns the number of flyts that exist
+    pub fn get_count(env: Env) -> i128 {
         env.storage()
-            .get(INSULT)
-            .unwrap_or(Ok(bytes!(&env, 0x0)))
+            .get(FLYT_ID)
+            .unwrap_or(Ok(0))
             .unwrap()
     }
+
+    pub fn send_like(env: Env, id: i128) {
+        
+    }
+
 }
 
 #[cfg(test)]
@@ -146,11 +159,11 @@ mod test {
         let contract_id = env.register_contract(None, Contract);
         let client = ContractClient::new(&env, &contract_id);
 
-        let insult = client.get_insult();
-        assert_eq!(insult, bytes!(&env, 0x0));
+        // let insult = client.get_insult();
+        // assert_eq!(insult, bytes!(&env, 0x0));
 
-        client.insult(&bytes!(&env, 0x123456789));
-        let insult = client.get_insult();
-        assert_eq!(insult, bytes!(&env, 0x123456789));
+        // client.insult(&bytes!(&env, 0x123456789));
+        // let insult = client.get_insult();
+        // assert_eq!(insult, bytes!(&env, 0x123456789));
     }
 }
