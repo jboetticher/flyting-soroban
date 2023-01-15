@@ -13,6 +13,13 @@ cargo build --target wasm32-unknown-unknown --release
 soroban invoke \
     --wasm target/wasm32-unknown-unknown/release/flyting_soroban.wasm \
     --id 1 \
-    --fn hello \
-    --arg degen
+    --fn get_insult 
+```
+
+```
+soroban invoke \
+    --wasm target/wasm32-unknown-unknown/release/flyting_soroban.wasm \
+    --id 1 \
+    --fn insult \
+    --arg thou-art-a-loser
 ```
