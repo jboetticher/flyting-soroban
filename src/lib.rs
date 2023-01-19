@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contractimpl, contracttype, contracterror, symbol, 
-    Env, Symbol, Bytes, bytes, Address, AccountId, Map
+    Env, Symbol, Bytes, Address
 };
 
 /* 
@@ -19,16 +19,14 @@ Plan for Flyter:
 - Send a flyt with an optional nickname
 */
 
-const INITIALIZED: Symbol = symbol!("READY");
 const FLYT_ID: Symbol = symbol!("FLYT_ID");
-const LIKES: Symbol = symbol!("LIKES_MAP");
 
 #[contracttype]
 #[derive(Debug, Eq, PartialEq)]
 pub struct Flyt {
-    pub from: AccountId,
+    pub from: Address,
     pub from_nick: Symbol,
-    pub to: AccountId,
+    pub to: Address,
     pub content: Bytes,
     pub response: i128
 }
@@ -46,15 +44,15 @@ pub struct FlytStats {
 pub enum Error {
     NotInitialized = 1,
     AlreadyInitialized = 2,
-    CannotRespondIfNotDirectedTo = 3,
+    CannotRespondIfNotDirectedTo = 3
 }
 
 impl Flyt {
-    pub fn new(from: AccountId, to: AccountId, content: Bytes, from_nick: Symbol) -> (Flyt, FlytStats) {
+    pub fn new(from: Address, to: Address, content: Bytes, from_nick: Symbol) -> (Flyt, FlytStats) {
         (Flyt { from, from_nick, to, content, response: 0 }, FlytStats { likes: 0, tips: 0 })
     }
 
-    pub fn respond(from: AccountId, to: AccountId, response: i128, content: Bytes, from_nick: Symbol) -> (Flyt, FlytStats) {
+    pub fn respond(from: Address, to: Address, response: i128, content: Bytes, from_nick: Symbol) -> (Flyt, FlytStats) {
         (Flyt { from, from_nick, to, content, response }, FlytStats { likes: 0, tips: 0 })
     }
 }
@@ -63,19 +61,8 @@ pub struct Contract;
 
 #[contractimpl]
 impl Contract {
-    /// Used to initialize the smart contract
-    pub fn initialize(env: Env) -> Result<(), Error> {
-        if env.storage().get(INITIALIZED).unwrap_or(Ok(false)).unwrap() {
-            return Err(Error::AlreadyInitialized);
-        }
-
-        // Creates a new map for likes
-
-        Ok(())
-    }
-
     /// Registers a new flyt
-    pub fn send_flyt(env: Env, recipient: AccountId, content: Bytes, nickname: Option<Symbol>) -> i128 {
+    pub fn send_flyt(env: Env, recipient: Address, content: Bytes, nickname: Option<Symbol>) -> i128 {
         let id: i128 = Self::get_count(env.clone()) + 1;
         let nick = match nickname {
             None => symbol!(""),
@@ -83,7 +70,7 @@ impl Contract {
         };
 
         // Generate Flyt
-        let (flyt, stats) = Flyt::new(env.source_account(), recipient, content, nick);
+        let (flyt, stats) = Flyt::new(env.invoker(), recipient, content, nick);
 
         // Store Flyt
         Self::store_new_flyt(env, id, flyt, stats);
@@ -97,7 +84,7 @@ impl Contract {
         let prev: Flyt = Self::get_flyt(env.clone(), respond_to);
 
         // The account can only respond if it was sent to them
-        if prev.to != env.source_account() {
+        if prev.to != env.invoker() {
             return Err(Error::CannotRespondIfNotDirectedTo);
         }
 
@@ -142,28 +129,66 @@ impl Contract {
             .unwrap()
     }
 
-    pub fn send_like(env: Env, id: i128) {
-        
-    }
+    /// Adds a like to a flyt
+    pub fn send_like(env: Env, id: i128) -> Result<(), Error> {
+        let stats_id = id * -1;
+        let mut stats: FlytStats = env.storage()
+            .get(stats_id)
+            .unwrap()
+            .unwrap();
 
+        stats.likes += 1;
+
+        env.storage().set(stats_id, stats);
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::{Contract, ContractClient};
-    use soroban_sdk::{Bytes, bytes, Env};
+    use soroban_sdk::{bytes, Env, Address, testutils::AccountId, symbol};
 
     #[test]
-    fn test() {
+    fn test_send_flyt() {
         let env = Env::default();
         let contract_id = env.register_contract(None, Contract);
         let client = ContractClient::new(&env, &contract_id);
 
-        // let insult = client.get_insult();
-        // assert_eq!(insult, bytes!(&env, 0x0));
+        let recipient = <soroban_sdk::AccountId as AccountId>::random(&env);
+        let recipient = Address::Account(recipient);
 
-        // client.insult(&bytes!(&env, 0x123456789));
-        // let insult = client.get_insult();
-        // assert_eq!(insult, bytes!(&env, 0x123456789));
+        let id = client.send_flyt(&recipient, &bytes!(&env, 0x0123456789), &None);
+        let flyt= client.get_flyt(&id);
+
+        assert_eq!(flyt.from, Address::Account(env.source_account()));
+        assert_eq!(flyt.from_nick, symbol!(""));
+        assert_eq!(flyt.to, recipient);
+        assert_eq!(flyt.content, bytes!(&env, 0x0123456789));
+        assert_eq!(flyt.response, 0);
+    }
+
+    #[test]
+    fn test_response_flyt() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, Contract);
+        let client = ContractClient::new(&env, &contract_id);
+
+        let recipient_id = <soroban_sdk::AccountId as AccountId>::random(&env);
+        let recipient = Address::Account(recipient_id.clone());
+        let id = client.send_flyt(&recipient, &bytes!(&env, 0x0123456789), &None);
+
+        env.set_source_account(&recipient_id);
+        let res_id = client.res_flyt(&id, &bytes!(&env, 0x0123), &None);
+
+        let flyt= client.get_flyt(&res_id);
+
+        // assert_eq!(flyt.from, Address::Account(env.source_account()));
+        assert_eq!(flyt.from_nick, symbol!(""));
+        assert_eq!(flyt.from, recipient);
+        // assert_eq!(flyt.to, Address::Account(original_source_account));
+        assert_eq!(flyt.content, bytes!(&env, 0x0123));
+        assert_eq!(flyt.response, id);
     }
 }
